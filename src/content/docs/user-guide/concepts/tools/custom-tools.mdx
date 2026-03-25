@@ -1,5 +1,6 @@
 ---
 title: Creating Custom Tools
+description: "Turn any Python function into an AI agent tool. Define inputs with docstrings, and the agent calls your function autonomously."
 ---
 
 There are multiple approaches to defining custom tools in Strands, with differences between Python and TypeScript implementations.
@@ -387,7 +388,7 @@ It's important to understand how invocation state compares to other approaches t
 </Tab>
 <Tab label="TypeScript">
 
-In TypeScript, tools access **agent state** through `context.agent.state`. The state provides key-value storage that persists across tool invocations but is not passed to the model:
+In TypeScript, tools access **agent state** through `context.agent.appState`. The state provides key-value storage that persists across tool invocations but is not passed to the model:
 
 ```typescript
 --8<-- "user-guide/concepts/tools/tools.ts:tool_context_invocation_state"

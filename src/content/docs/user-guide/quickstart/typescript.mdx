@@ -1,5 +1,6 @@
 ---
 title: TypeScript Quickstart
+description: "Get an AI agent running in TypeScript in under 5 minutes. Install the SDK, configure a model provider, and build your first agent."
 sidebar:
   label: "TypeScript"
 ---
@@ -36,7 +37,7 @@ npm install @strands-agents/sdk
 The Strands Agents SDK includes optional vended tools that are built-in and production-ready for your agents to use. These tools can be imported directly as follows:
 
 ```typescript
-import { bash } from '@strands-agents/sdk/vended_tools/bash'
+import { bash } from '@strands-agents/sdk/vended-tools/bash'
 ```
 
 
@@ -170,7 +171,7 @@ More details in the [Amazon Bedrock Model Provider](../concepts/model-providers/
 Strands Agents supports several other model providers beyond Amazon Bedrock:
 
 - **[OpenAI](../concepts/model-providers/openai.md)** - Access to OpenAI or OpenAI-compatible models
-- **[Gemini](../concepts/model-providers/gemini.md)** - Access to Google's Gemini models
+- **[Google](../concepts/model-providers/google.md)** - Access to Google's Gemini models
 
 ## Capturing Streamed Data & Events
 

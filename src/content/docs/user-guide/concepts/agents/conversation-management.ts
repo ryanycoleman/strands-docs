@@ -1,4 +1,5 @@
-import { Agent, NullConversationManager, SlidingWindowConversationManager } from '@strands-agents/sdk'
+import { Agent, ConversationManager, AfterInvocationEvent, NullConversationManager, SlidingWindowConversationManager } from '@strands-agents/sdk'
+import type { LocalAgent, ConversationManagerReduceOptions } from '@strands-agents/sdk'
 
 async function nullConversationManagerAgent() {
   // --8<-- [start:null_conversation_manager]
@@ -21,3 +22,43 @@ async function slidingWindowConversationManagerAgent() {
   })
   // --8<-- [end:sliding_window_conversation_manager]
 }
+
+// --8<-- [start:custom_conversation_manager]
+class Last10MessagesManager extends ConversationManager {
+  readonly name = 'my:last-10-messages'
+
+  reduce({ agent }: ConversationManagerReduceOptions): boolean {
+    if (agent.messages.length <= 10) return false
+    agent.messages.splice(0, agent.messages.length - 10)
+    return true
+  }
+}
+
+const agent = new Agent({
+  conversationManager: new Last10MessagesManager(),
+})
+// --8<-- [end:custom_conversation_manager]
+
+// --8<-- [start:custom_conversation_manager_proactive]
+class MyManager extends ConversationManager {
+  readonly name = 'my:manager'
+  private readonly _maxMessages = 5
+
+  reduce({ agent }: ConversationManagerReduceOptions): boolean {
+    return this._trim(agent.messages)
+  }
+
+  override initAgent(agent: LocalAgent): void {
+    super.initAgent(agent) // preserves overflow recovery
+    agent.addHook(AfterInvocationEvent, (event) => {
+      this._trim(event.agent.messages)
+    })
+  }
+
+  private _trim(messages: LocalAgent['messages']): boolean {
+    if (messages.length <= this._maxMessages) return false
+    messages.splice(0, messages.length - this._maxMessages)
+    return true
+  }
+}
+// --8<-- [end:custom_conversation_manager_proactive]

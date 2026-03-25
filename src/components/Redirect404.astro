@@ -1,3 +1,9 @@
+---
+import { buildRedirectFromMap } from '../util/redirect.build'
+
+const redirectFromMap = await buildRedirectFromMap()
+---
+
 <!--
   Redirect404: handles client-side redirects for old/moved URLs that land on the 404 page.
 
@@ -29,8 +35,12 @@
   </style>
 </noscript>
 
+<script id="redirect-map" type="application/json" set:html={JSON.stringify(redirectFromMap)} />
+
 <script>
   import { resolveRedirectFromUrl } from '../util/redirect'
+
+  const redirectFromMap = JSON.parse(document.getElementById('redirect-map')!.textContent!)
 
   // Safety net: reveal the page after 3s no matter what, in case the redirect doesn't fire
   const showTimeout = setTimeout(showPage, 3000)
@@ -40,29 +50,38 @@
     clearTimeout(showTimeout)
   }
 
-  function tryRedirect(): boolean {
-    const target = resolveRedirectFromUrl(window.location.href)
+  function tryRedirect() {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    // Strip the base prefix so resolveRedirectFromUrl only sees the path relative to the site root
+    const rawPath = window.location.pathname
+    const pathWithoutBase = base && rawPath.startsWith(base) ? rawPath.slice(base.length) || '/' : rawPath
+
+    const target = resolveRedirectFromUrl(pathWithoutBase, redirectFromMap)
     if (!target) return false
 
-    let dest: string
+    let destPath: string
     if (target.startsWith('https://') || target.startsWith('http://')) {
-      dest = target
-    } else {
-      const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-      dest = target === '/' ? `${base}/` : `${base}/${target}`
+      console.log(`[Redirect404] Redirecting ${window.location.href} → ${target}`)
+      window.location.replace(target)
+      return true
     }
 
-    const currentPath = window.location.pathname.replace(/\/+$/, '')
-    const destPath = dest.replace(/\/+$/, '')
-    if (destPath === currentPath) return false
+    destPath = target === '/' ? `${base}/` : `${base}/${target}`
 
-    console.log(`[Redirect404] Redirecting ${window.location.href} → ${dest}`)
-    window.location.replace(dest)
+    const currentPath = window.location.pathname.replace(/\/+$/, '')
+    if (destPath.replace(/\/+$/, '') === currentPath) return false
+
+    // Preserve query params when redirecting to an internal path
+    const destUrl = new URL(destPath, window.location.origin)
+    new URLSearchParams(window.location.search).forEach((v, k) => destUrl.searchParams.set(k, v))
+
+    console.log(`[Redirect404] Redirecting ${window.location.href} → ${destUrl.href}`)
+    window.location.replace(destUrl.href)
     return true
   }
 
   function showPage() {
-    const el = document.querySelector<HTMLElement>('.main-pane')
+    const el = document.querySelector('.main-pane') as HTMLElement
     if (el) el.style.visibility = 'visible'
   }
 </script>

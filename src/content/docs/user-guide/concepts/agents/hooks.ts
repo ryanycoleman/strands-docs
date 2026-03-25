@@ -1,4 +1,5 @@
 import { Agent, FunctionTool } from '@strands-agents/sdk'
+import type { LocalAgent, Plugin } from '@strands-agents/sdk'
 import {
   BeforeInvocationEvent,
   AfterInvocationEvent,
@@ -8,7 +9,8 @@ import {
   AfterModelCallEvent,
   MessageAddedEvent,
 } from '@strands-agents/sdk'
-import type { HookProvider, HookRegistry } from '@strands-agents/sdk'
+import { Graph, Swarm, BeforeNodeCallEvent, AfterNodeCallEvent } from '@strands-agents/sdk/multiagent'
+import type { MultiAgent, MultiAgentPlugin } from '@strands-agents/sdk/multiagent'
 
 // Mock tools for examples
 const myTool = new FunctionTool({
@@ -63,7 +65,7 @@ async function individualCallbackExample() {
     console.log('Custom callback triggered')
   }
 
-  agent.hooks.addCallback(BeforeInvocationEvent, myCallback)
+  agent.addHook(BeforeInvocationEvent, myCallback)
   // --8<-- [end:individual_callback]
 }
 
@@ -76,9 +78,11 @@ async function individualCallbackExample() {
 
 async function toolInterceptionExample() {
   // --8<-- [start:tool_interception]
-  class ToolInterceptor implements HookProvider {
-    registerCallbacks(registry: HookRegistry): void {
-      registry.addCallback(BeforeToolCallEvent, (ev) => this.interceptTool(ev))
+  class ToolInterceptor implements Plugin {
+    name = 'tool-interceptor'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(BeforeToolCallEvent, (event) => this.interceptTool(event))
     }
 
     private interceptTool(event: BeforeToolCallEvent): void {
@@ -94,9 +98,11 @@ async function toolInterceptionExample() {
 
 async function resultModificationExample() {
   // --8<-- [start:result_modification]
-  class ResultProcessor implements HookProvider {
-    registerCallbacks(registry: HookRegistry): void {
-      registry.addCallback(AfterToolCallEvent, (ev) => this.processResult(ev))
+  class ResultProcessor implements Plugin {
+    name = 'result-processor'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(AfterToolCallEvent, (ev) => this.processResult(ev))
     }
 
     private processResult(event: AfterToolCallEvent): void {
@@ -119,12 +125,17 @@ async function resultModificationExample() {
 
 async function composabilityExample() {
   // --8<-- [start:composability]
-  class RequestLoggingHook implements HookProvider {
-    registerCallbacks(registry: HookRegistry): void {
-      registry.addCallback(BeforeInvocationEvent, (ev) => this.logRequest(ev))
-      registry.addCallback(AfterInvocationEvent, (ev) => this.logResponse(ev))
-      registry.addCallback(BeforeToolCallEvent, (ev) => this.logToolUse(ev))
+  class RequestLoggingHook implements Plugin {
+    name = 'request-logging'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(BeforeInvocationEvent, (ev) => this.logRequest(ev))
+      agent.addHook(AfterInvocationEvent, (ev) => this.logResponse(ev))
+      agent.addHook(BeforeToolCallEvent, (ev) => this.logToolUse(ev))
     }
+
+    // ...
+    // --8<-- [end:composability]
 
     private logRequest(event: BeforeInvocationEvent): void {
       // ...
@@ -138,14 +149,15 @@ async function composabilityExample() {
       // ...
     }
   }
-  // --8<-- [end:composability]
 }
 
 async function loggingModificationsExample() {
   // --8<-- [start:logging_modifications]
-  class ResultProcessor implements HookProvider {
-    registerCallbacks(registry: HookRegistry): void {
-      registry.addCallback(AfterToolCallEvent, (ev) => this.processResult(ev))
+  class ResultProcessor implements Plugin {
+    name = 'result-processor'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(AfterToolCallEvent, (ev) => this.processResult(ev))
     }
 
     private processResult(event: AfterToolCallEvent): void {
@@ -169,7 +181,7 @@ async function loggingModificationsExample() {
 
 async function fixedToolArgumentsExample() {
   // --8<-- [start:fixed_tool_arguments_class]
-  class ConstantToolArguments implements HookProvider {
+  class ConstantToolArguments implements Plugin {
     private fixedToolArguments: Record<string, Record<string, unknown>>
 
     /**
@@ -183,8 +195,10 @@ async function fixedToolArgumentsExample() {
       this.fixedToolArguments = fixedToolArguments
     }
 
-    registerCallbacks(registry: HookRegistry): void {
-      registry.addCallback(BeforeToolCallEvent, (ev) => this.fixToolArguments(ev))
+    name = 'constant-tool-arguments'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(BeforeToolCallEvent, (ev) => this.fixToolArguments(ev))
     }
 
     private fixToolArguments(event: BeforeToolCallEvent): void {
@@ -205,7 +219,185 @@ async function fixedToolArgumentsExample() {
     },
   })
 
-  const agent = new Agent({ tools: [calculator], hooks: [fixParameters] })
+  const agent = new Agent({ tools: [calculator], plugins: [fixParameters] })
   const result = await agent.invoke('What is 2 / 3?')
   // --8<-- [end:fixed_tool_arguments_usage]
 }
+
+async function limitToolCountsExample() {
+  // --8<-- [start:limit_tool_counts_class]
+  class LimitToolCounts implements Plugin {
+    private maxToolCounts: Record<string, number>
+    private toolCounts: Record<string, number> = {}
+
+    /**
+     * Initialize with maximum allowed invocations per tool.
+     *
+     * @param maxToolCounts - A dictionary mapping tool names to their maximum
+     *     allowed invocation counts per agent invocation.
+     */
+    constructor(maxToolCounts: Record<string, number>) {
+      this.maxToolCounts = maxToolCounts
+    }
+
+    name = 'limit-tool-counts'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(BeforeInvocationEvent, () => this.resetCounts())
+      agent.addHook(BeforeToolCallEvent, (event) => this.interceptTool(event))
+    }
+
+    private resetCounts(): void {
+      this.toolCounts = {}
+    }
+
+    private interceptTool(event: BeforeToolCallEvent): void {
+      const toolName = event.toolUse.name
+      const maxToolCount = this.maxToolCounts[toolName]
+      const toolCount = (this.toolCounts[toolName] ?? 0) + 1
+      this.toolCounts[toolName] = toolCount
+
+      if (maxToolCount !== undefined && toolCount > maxToolCount) {
+        event.cancel =
+          `Tool '${toolName}' has been invoked too many times and is now being throttled. ` +
+          `DO NOT CALL THIS TOOL ANYMORE`
+      }
+    }
+  }
+  // --8<-- [end:limit_tool_counts_class]
+
+  // --8<-- [start:limit_tool_counts_usage]
+  const limitPlugin = new LimitToolCounts({ sleep: 3 })
+
+  const agent = new Agent({ tools: [sleep], plugins: [limitPlugin] })
+
+  // This call will only have 3 successful sleeps
+  await agent.invoke('Sleep 5 times for 10ms each or until you can\'t anymore')
+  // This will sleep successfully again because the count resets every invocation
+  await agent.invoke('Sleep once')
+  // --8<-- [end:limit_tool_counts_usage]
+}
+
+// =====================
+// Multi-Agent Hook Examples
+// =====================
+
+async function orchestratorCallbackExample() {
+  // --8<-- [start:orchestrator_callback]
+  const researcher = new Agent({ id: 'researcher', systemPrompt: 'You are a research specialist.' })
+  const writer = new Agent({ id: 'writer', systemPrompt: 'You are a writing specialist.' })
+
+  const graph = new Graph({
+    nodes: [researcher, writer],
+    edges: [['researcher', 'writer']],
+  })
+
+  // Register individual callbacks on the orchestrator
+  graph.addHook(BeforeNodeCallEvent, (event) => {
+    console.log(`Node ${event.nodeId} starting`)
+  })
+
+  graph.addHook(AfterNodeCallEvent, (event) => {
+    console.log(`Node ${event.nodeId} completed`)
+  })
+  // --8<-- [end:orchestrator_callback]
+}
+
+async function conditionalNodeExecutionExample() {
+  // --8<-- [start:conditional_node_execution]
+  const researcher = new Agent({ id: 'researcher', systemPrompt: 'You are a research specialist.' })
+  const writer = new Agent({ id: 'writer', systemPrompt: 'You are a writing specialist.' })
+  const reviewer = new Agent({ id: 'reviewer', systemPrompt: 'You are a review specialist.' })
+
+  const graph = new Graph({
+    nodes: [researcher, writer, reviewer],
+    edges: [
+      ['researcher', 'writer'],
+      ['writer', 'reviewer'],
+    ],
+  })
+
+  // Cancel specific nodes based on custom conditions
+  graph.addHook(BeforeNodeCallEvent, (event) => {
+    if (event.nodeId === 'reviewer') {
+      // Cancel with a custom message
+      event.cancel = 'Skipping review for this run'
+    }
+  })
+  // --8<-- [end:conditional_node_execution]
+}
+
+async function orchestratorAgnosticDesignExample() {
+  // --8<-- [start:orchestrator_agnostic_design]
+  class UniversalMultiAgentPlugin implements MultiAgentPlugin {
+    readonly name = 'universal-multi-agent'
+
+    initMultiAgent(orchestrator: MultiAgent): void {
+      orchestrator.addHook(BeforeNodeCallEvent, (event) => {
+        console.log(`Executing node ${event.nodeId} in ${orchestrator.id} orchestrator`)
+
+        // Handle orchestrator-specific logic if needed
+        if (orchestrator instanceof Graph) {
+          this.handleGraphNode(event)
+        } else if (orchestrator instanceof Swarm) {
+          this.handleSwarmNode(event)
+        }
+      })
+    }
+
+    private handleGraphNode(event: BeforeNodeCallEvent): void {
+      // Graph-specific handling
+    }
+
+    private handleSwarmNode(event: BeforeNodeCallEvent): void {
+      // Swarm-specific handling
+    }
+  }
+  // --8<-- [end:orchestrator_agnostic_design]
+  void UniversalMultiAgentPlugin
+}
+
+async function layeredHooksExample() {
+  // --8<-- [start:layered_hooks]
+  // Agent-level hooks via plugins
+  class AgentLoggingPlugin implements Plugin {
+    name = 'agent-logging'
+
+    initAgent(agent: LocalAgent): void {
+      agent.addHook(BeforeToolCallEvent, (event) => {
+        console.log(`Agent tool call: ${event.toolUse.name}`)
+      })
+    }
+  }
+
+  // Create agents with individual hooks
+  const agent1 = new Agent({ id: 'agent1', plugins: [new AgentLoggingPlugin()] })
+  const agent2 = new Agent({ id: 'agent2', plugins: [new AgentLoggingPlugin()] })
+
+  // Orchestrator-level hooks via MultiAgentPlugin
+  class OrchestratorLoggingPlugin implements MultiAgentPlugin {
+    readonly name = 'orchestrator-logging'
+
+    initMultiAgent(orchestrator: MultiAgent): void {
+      orchestrator.addHook(BeforeNodeCallEvent, (event) => {
+        console.log(`Orchestrator node execution: ${event.nodeId}`)
+      })
+    }
+  }
+
+  // Create orchestrator with multi-agent hooks
+  const graph = new Graph({
+    nodes: [agent1, agent2],
+    edges: [['agent1', 'agent2']],
+    plugins: [new OrchestratorLoggingPlugin()],
+  })
+  // --8<-- [end:layered_hooks]
+  void graph
+}
+
+// Suppress unused function warnings
+void limitToolCountsExample
+void orchestratorCallbackExample
+void conditionalNodeExecutionExample
+void orchestratorAgnosticDesignExample
+void layeredHooksExample
